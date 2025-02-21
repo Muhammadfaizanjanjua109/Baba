@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Interactive 3D Portfolio Piece</title>
+    <style>
+        body {
+            margin: 0;
+            background: #000;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+        }
+        #container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        .title {
+            position: fixed;
+            top: 2rem;
+            color: #fff;
+            font-size: 1.5rem;
+            text-align: center;
+            z-index: 10;
+            opacity: 0.8;
+        }
+        .instructions {
+            position: fixed;
+            bottom: 2rem;
+            color: #fff;
+            font-size: 1rem;
+            text-align: center;
+            z-index: 10;
+            opacity: 0.6;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <h1 class="title">Interactive Sculpture</h1>
+        <div class="instructions">Move cursor to interact • Scroll to zoom • Drag to rotate</div>
+    </div>
+
+    <script async src="https://unpkg.com/es-module-shims/dist/es-module-shims.js"></script>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.1/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.1/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x000000, 1);
+        document.getElementById('container').appendChild(renderer.domElement);
+
+        const particleCount = 1000;
+        const particles = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const velocities = [];
+        
+        for(let i = 0; i < particleCount; i++) {
+            positions[i * 3] = (Math.random() - 0.5) * 3;
+            positions[i * 3 + 1] = (Math.random() - 0.5) * 3;
+            positions[i * 3 + 2] = (Math.random() - 0.5) * 3;
+            velocities.push({
+                x: (Math.random() - 0.5) * 0.02,
+                y: (Math.random() - 0.5) * 0.02,
+                z: (Math.random() - 0.5) * 0.02
+            });
+        }
+        
+        particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        const particleMaterial = new THREE.PointsMaterial({
+            color: 0x00ffff,
+            size: 0.02,
+            transparent: true,
+            opacity: 0.6
+        });
+        const particleSystem = new THREE.Points(particles, particleMaterial);
+        scene.add(particleSystem);
+
+        // Enhanced lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+        
+        const pointLight = new THREE.PointLight(0x00ffff, 1);
+        pointLight.position.set(5, 5, 5);
+        scene.add(pointLight);
+
+        camera.position.z = 2.5;
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.minDistance = 1.5;
+        controls.maxDistance = 4;
+
+        const shatterMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                time: { value: 0 },
+                mousePosition: { value: new THREE.Vector2(0, 0) },
+                intensity: { value: 0 }
+            },
+            vertexShader: `
+                uniform float time;
+                uniform vec2 mousePosition;
+                uniform float intensity;
+                varying vec3 vNormal;
+                varying vec3 vPosition;
+                
+                float noise(vec3 p) {
+                    return fract(sin(dot(p, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
+                }
+
+                void main() {
+                    vNormal = normal;
+                    vPosition = position;
+                    
+                    vec3 pos = position;
+                    
+                    vec4 worldPos = modelViewMatrix * vec4(position, 1.0);
+                    vec2 screenPos = worldPos.xy / worldPos.w;
+                    float distanceFromMouse = length(screenPos - mousePosition);
+                    
+                    // Enhanced particle-like distortion
+                    float noiseVal = noise(position * 10.0 + time * 0.5);
+                    float particleEffect = 
+                        sin(position.y * 20.0 + noiseVal * 15.0) * 
+                        cos(position.x * 20.0 + time * 4.0) *
+                        sin(position.z * 20.0 + time);
+                    
+                    if(distanceFromMouse < 1.2) {
+                        float strength = pow(1.2 - distanceFromMouse, 2.0);
+                        vec3 direction = normalize(pos);
+                        pos += direction * (particleEffect * 0.5 + noiseVal * 0.3) * strength * intensity * 3.0;
+                        pos += normal * sin(time * 5.0) * strength * 0.1;
+                    }
+                    
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+                }
+            `,
+            fragmentShader: `
+                varying vec3 vNormal;
+                varying vec3 vPosition;
+                uniform float time;
+                uniform float intensity;
+
+                void main() {
+                    vec3 baseColor = vec3(0.0, 1.0, 1.0);
+                    float fresnel = pow(1.0 - abs(dot(normalize(vNormal), vec3(0.0, 0.0, 1.0))), 3.0);
+                    
+                    // Enhanced glow effect
+                    float glow = pow(fresnel, 1.2) * (0.8 + sin(time * 2.0) * 0.2);
+                    vec3 glowColor = mix(baseColor, vec3(1.0), glow * intensity);
+                    
+                    gl_FragColor = vec4(glowColor, 1.0);
+                }
+            `
+        });
+
+        let model;
+        const loader = new GLTFLoader();
+        loader.load(
+            './model.glb',
+            function (gltf) {
+                model = gltf.scene;
+                
+                model.traverse((child) => {
+                    if (child.isMesh) {
+                        child.material = shatterMaterial;
+                    }
+                });
+
+                const box = new THREE.Box3().setFromObject(model);
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+                
+                model.position.sub(center);
+                const scale = 2 / Math.max(size.x, size.y, size.z);
+                model.scale.multiplyScalar(scale);
+
+                // Set initial position to center vertically
+                model.position.y = 0;
+                
+                scene.add(model);
+            }
+        );
+
+        let mouseIntensity = 0;
+        const mouse = new THREE.Vector2();
+        let isMouseMoving = false;
+        let mouseTimeout;
+
+        document.addEventListener('mousemove', (event) => {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            shatterMaterial.uniforms.mousePosition.value = mouse;
+            mouseIntensity = 2.0;
+            isMouseMoving = true;
+            
+            clearTimeout(mouseTimeout);
+            mouseTimeout = setTimeout(() => {
+                isMouseMoving = false;
+            }, 100);
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        function updateParticles() {
+            const positions = particleSystem.geometry.attributes.position.array;
+            
+            for(let i = 0; i < particleCount; i++) {
+                positions[i * 3] += velocities[i].x;
+                positions[i * 3 + 1] += velocities[i].y;
+                positions[i * 3 + 2] += velocities[i].z;
+
+                // Reset particles that go too far
+                if(Math.abs(positions[i * 3]) > 2) velocities[i].x *= -1;
+                if(Math.abs(positions[i * 3 + 1]) > 2) velocities[i].y *= -1;
+                if(Math.abs(positions[i * 3 + 2]) > 2) velocities[i].z *= -1;
+            }
+            
+            particleSystem.geometry.attributes.position.needsUpdate = true;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            shatterMaterial.uniforms.time.value += 0.01;
+            
+            if (isMouseMoving) {
+                mouseIntensity = Math.min(mouseIntensity + 0.15, 2.0);
+            } else {
+                mouseIntensity *= 0.95;
+            }
+            
+            shatterMaterial.uniforms.intensity.value = mouseIntensity;
+            
+            updateParticles();
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        animate();
+    </script>
+</body>
+</html>
